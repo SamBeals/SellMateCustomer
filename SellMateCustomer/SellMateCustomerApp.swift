@@ -1,6 +1,6 @@
 //
-//  SellMateTrialApp.swift
-//  SellMateTrial
+//  SellMateCustomerApp.swift
+//  SellMateCustomer
 //
 //  Created by Sam on 12/18/25.
 //
@@ -18,7 +18,7 @@ class FirebaseAppDelegate: NSObject, UIApplicationDelegate {
 }
 
 @main
-struct SellMateTrialApp: App {
+struct SellMateCustomerApp: App {
     // Register app delegate for Firebase setup
     @UIApplicationDelegateAdaptor(FirebaseAppDelegate.self) var firebaseDelegate
 
@@ -37,7 +37,7 @@ struct SellMateTrialApp: App {
 
     var body: some Scene {
         WindowGroup {
-            LandingView()
+            CustomerInventoryListView()
         }
         .modelContainer(sharedModelContainer)
     }

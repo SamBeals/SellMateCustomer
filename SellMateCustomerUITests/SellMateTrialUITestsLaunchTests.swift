@@ -1,13 +1,13 @@
 //
-//  SellMateTrialUITestsLaunchTests.swift
-//  SellMateTrialUITests
+//  SellMateCustomerUITestsLaunchTests.swift
+//  SellMateCustomerUITests
 //
 //  Created by Sam on 12/18/25.
 //
 
 import XCTest
 
-final class SellMateTrialUITestsLaunchTests: XCTestCase {
+final class SellMateCustomerUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

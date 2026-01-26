@@ -1,6 +1,6 @@
 //
 //  PulseService.swift
-//  SellMateTrial
+//  SellMateCustomer
 //
 //  Created by Sam on 12/18/25.
 //

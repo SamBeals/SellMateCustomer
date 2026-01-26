@@ -9,21 +9,21 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>sambeals.SellMateTrial</string>
+	<string>sambeals.SellMateCustomer</string>
 	<key>PROJECT_ID</key>
 	<string>sellmate-bdd22</string>
 	<key>STORAGE_BUCKET</key>
 	<string>sellmate-bdd22.firebasestorage.app</string>
 	<key>IS_ADS_ENABLED</key>
-	<false></false>
+	<false/>
 	<key>IS_ANALYTICS_ENABLED</key>
-	<false></false>
+	<false/>
 	<key>IS_APPINVITE_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>IS_GCM_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>IS_SIGNIN_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>GOOGLE_APP_ID</key>
 	<string>1:1002770348452:ios:1e715d202f589fc67a6931</string>
 </dict>

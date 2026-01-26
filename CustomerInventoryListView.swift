@@ -1,0 +1,117 @@
+import SwiftUI
+import Combine
+
+private func dollars(_ cents: Int) -> String {
+    String(format: "$%.2f", Double(cents) / 100.0)
+}
+
+struct CustomerInventoryListView: View {
+    @StateObject private var vm = CustomerInventoryViewModel(machineId: "machine_001")
+    @StateObject private var order = OrderDraft()
+    @StateObject private var terminal = TerminalSessionManager.shared
+    @State private var showCheckout = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if vm.isLoading {
+                        ProgressView("Loading…")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    } else if let err = vm.errorText {
+                        VStack(spacing: 8) {
+                            Text("Error")
+                                .font(.headline)
+                            Text(err)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .multilineTextAlignment(.center)
+                            Button("Retry") { vm.load() }
+                                .buttonStyle(.bordered)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if vm.slots.isEmpty {
+                        VStack(spacing: 8) {
+                            Text("No items available.")
+                                .foregroundColor(.secondary)
+                            Button("Reload") { vm.load() }
+                                .buttonStyle(.bordered)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        List(vm.slots) { slot in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(slot.product?.name.isEmpty == false ? slot.product!.name : "Empty")
+                                        .font(.headline)
+                                    Text(dollars(slot.product?.priceCents ?? 0))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Button("Add to cart") {
+                                    order.add(slot: slot)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!(slot.enabled && slot.inventory > 0 && (slot.product?.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)))
+                            }
+                        }
+                        .listStyle(.insetGrouped)
+                    }
+                }
+
+                if !order.lines.isEmpty {
+                    Button {
+                        showCheckout = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "cart.fill")
+                            Text(dollars(order.totalCents))
+                                .bold()
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.accentColor)
+                        .foregroundColor(.white)
+                        .clipShape(Capsule())
+                        .shadow(radius: 2)
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Available Items")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    HStack(spacing: 6) {
+                        if terminal.isBusy {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        }
+                        let status = terminal.connectedReader != nil ? "Connected" : "Connecting…"
+                        Text("Reader: \(status)")
+                            .font(.caption)
+                            .foregroundColor(terminal.connectedReader != nil ? .green : .secondary)
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Reload") { vm.load() }
+                }
+            }
+            .onAppear {
+                if vm.slots.isEmpty && vm.isLoading == false {
+                    vm.load()
+                }
+                terminal.ensureConnected(simulated: false)
+            }
+            .sheet(isPresented: $showCheckout) {
+                NavigationStack {
+                    CheckoutView(order: order)
+                }
+            }
+        }
+    }
+}
+
+#Preview {
+    CustomerInventoryListView()
+}

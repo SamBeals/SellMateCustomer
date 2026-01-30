@@ -8,7 +8,7 @@ private func dollars(_ cents: Int) -> String {
 struct CustomerInventoryListView: View {
     @StateObject private var vm = CustomerInventoryViewModel(machineId: "machine_001")
     @StateObject private var order = OrderDraft()
-    @StateObject private var terminal = TerminalSessionManager.shared
+    @ObservedObject private var terminal = TerminalSessionManager.shared
     @State private var showCheckout = false
 
     var body: some View {
@@ -82,16 +82,22 @@ struct CustomerInventoryListView: View {
             .navigationTitle("Available Items")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    HStack(spacing: 6) {
-                        if terminal.isBusy {
-                            ProgressView()
-                                .scaleEffect(0.8)
+                    Button {
+                        // Retrigger discovery/connection if not connected yet.
+                        terminal.ensureConnected(simulated: false)
+                    } label: {
+                        HStack(spacing: 6) {
+                            if terminal.isBusy {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                            let status = terminal.connectedReader != nil ? "Connected" : "Connect Reader"
+                            Text("Reader: \(status)")
+                                .font(.caption)
+                                .foregroundColor(terminal.connectedReader != nil ? .green : .secondary)
                         }
-                        let status = terminal.connectedReader != nil ? "Connected" : "Connecting…"
-                        Text("Reader: \(status)")
-                            .font(.caption)
-                            .foregroundColor(terminal.connectedReader != nil ? .green : .secondary)
                     }
+                    .disabled(terminal.isBusy) // Optional: prevent spamming while busy
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Reload") { vm.load() }

@@ -33,6 +33,8 @@
 		220268C92F2727A400996694 /* CustomerInventoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220268C82F2727A400996694 /* CustomerInventoryViewModel.swift */; };
 		220268CB2F2727AA00996694 /* CartLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220268CA2F2727AA00996694 /* CartLine.swift */; };
 		220268CD2F272D9500996694 /* TerminalSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220268CC2F272D9500996694 /* TerminalSessionManager.swift */; };
+		22A2FA7D2F294A9B00AF5DDD /* VendSequenceItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A2FA7C2F294A9B00AF5DDD /* VendSequenceItem.swift */; };
+		22A2FA812F2B24F700AF5DDD /* PiVendStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A2FA802F2B24F700AF5DDD /* PiVendStep.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +60,8 @@
 		224A17AB2F1DFB1E00D1A896 /* PlanogramGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanogramGridView.swift; sourceTree = "<group>"; };
 		224A17AD2F1DFB6C00D1A896 /* SlotDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlotDetailView.swift; sourceTree = "<group>"; };
 		224A17B32F2065C700D1A896 /* PiVendClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiVendClient.swift; sourceTree = "<group>"; };
+		22A2FA7C2F294A9B00AF5DDD /* VendSequenceItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VendSequenceItem.swift; sourceTree = "<group>"; };
+		22A2FA802F2B24F700AF5DDD /* PiVendStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiVendStep.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -109,6 +113,8 @@
 		2242A1232EF467FF00C92AEE = {
 			isa = PBXGroup;
 			children = (
+				22A2FA802F2B24F700AF5DDD /* PiVendStep.swift */,
+				22A2FA7C2F294A9B00AF5DDD /* VendSequenceItem.swift */,
 				220268CA2F2727AA00996694 /* CartLine.swift */,
 				220268C82F2727A400996694 /* CustomerInventoryViewModel.swift */,
 				220268C42F27278100996694 /* CheckoutView.swift */,
@@ -284,6 +290,7 @@
 			files = (
 				220268762F26EBE400996694 /* LandingView.swift in Sources */,
 				220268772F26EBE400996694 /* PlanogramView.swift in Sources */,
+				22A2FA7D2F294A9B00AF5DDD /* VendSequenceItem.swift in Sources */,
 				220268CD2F272D9500996694 /* TerminalSessionManager.swift in Sources */,
 				220268C92F2727A400996694 /* CustomerInventoryViewModel.swift in Sources */,
 				220268C52F27278100996694 /* CheckoutView.swift in Sources */,
@@ -298,6 +305,7 @@
 				2202687F2F26EBE400996694 /* PulseService.swift in Sources */,
 				220268C72F27278600996694 /* CustomerInventoryListView.swift in Sources */,
 				220268802F26EBE400996694 /* FirestorePlanogramService.swift in Sources */,
+				22A2FA812F2B24F700AF5DDD /* PiVendStep.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

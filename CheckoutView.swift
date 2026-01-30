@@ -3,10 +3,10 @@
 //  SellMateTrial
 //
 //  Created by Sam on 1/25/26.
+//  Updated by Sam on 1/27/26.
 //
 
 import SwiftUI
-import Combine
 import StripeTerminal
 
 struct CheckoutView: View {
@@ -21,7 +21,6 @@ struct CheckoutView: View {
     var body: some View {
         VStack(spacing: 0) {
             List {
-                // Reader status section
                 Section(header: Text("Reader")) {
                     if let reader = connectedReader {
                         HStack {
@@ -69,11 +68,10 @@ struct CheckoutView: View {
                                     HStack(spacing: 8) {
                                         Button("−") { order.removeOne(slotId: line.slotId) }
                                             .buttonStyle(.bordered)
-                                        Button("+") {
-                                            order.increment(slotId: line.slotId)
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .disabled(line.qty >= line.quantityAvailable)
+
+                                        Button("+") { order.increment(slotId: line.slotId) }
+                                            .buttonStyle(.bordered)
+                                            .disabled(line.qty >= line.quantityAvailable)
                                     }
                                 }
                             }
@@ -91,7 +89,6 @@ struct CheckoutView: View {
                 }
             }
 
-            // Bottom action bar
             HStack {
                 Button("Back") { dismiss() }
                     .buttonStyle(.bordered)
@@ -105,23 +102,25 @@ struct CheckoutView: View {
                             return
                         }
 
-                        // Collect vending masks from cart lines
-                        let masks = order.lines.compactMap { $0.i2cMask }
-
-                        // Trigger the end-to-end payment + vend flow
                         let result = await TerminalSessionManager.shared.processPurchase(
                             amountCents: order.totalCents,
                             currency: "usd",
-                            masks: masks,
-                            pulseSeconds: 2.0
+                            lines: order.lines,
+                            pulseMs: 900,
+                            settleMs: 500
                         )
 
                         switch result {
-                        case .success:
+                        case .success(let vendResp):
+                            let statusText = vendResp.ok ? "ok" : "not ok"
+                            let mode = vendResp.mode
+                            let orderId = vendResp.order_id ?? "nil"
+                            print("[Checkout] Vend response: ok=\(statusText), mode=\(mode), order_id=\(orderId)")
                             order.clear()
                             dismiss()
+
                         case .failure(let error):
-                            print("[Checkout] Purchase failed: \(error.localizedDescription)")
+                            print("[Checkout] Purchase/vend failed: \(error.localizedDescription)")
                             // Optionally surface TerminalSessionManager.shared.errorText in UI
                         }
                     }

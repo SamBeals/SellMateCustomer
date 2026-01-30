@@ -1,34 +1,182 @@
 import Foundation
-import SwiftUI
-import Combine
 import StripeTerminal
+import Combine
 
 @MainActor
 final class TerminalSessionManager: NSObject, ObservableObject {
+
     static let shared = TerminalSessionManager()
 
-    @Published private(set) var connectedReader: Reader?
-    @Published private(set) var isBusy: Bool = false
-    @Published private(set) var statusMessage: String = "Idle"
-    @Published private(set) var errorText: String?
+    @Published var isBusy: Bool = false
+    @Published var errorText: String?
 
-    // New: publish discovered readers so UI can present a list
-    @Published private(set) var discoveredReaders: [Reader] = []
+    var connectedReader: Reader? {
+        guard Terminal.isInitialized() else { return nil }
+        return Terminal.shared.connectedReader
+    }
 
-    private var discoveryTask: Task<Void, Never>?
-    private var connectionTask: Task<Void, Never>?
+    private let pi = PiVendClient()
 
-    // Reuse your existing backend token endpoint and default location
+    // Backend endpoints (Pi-hosted Node server in your setup)
     private let tokenURL = URL(string: "http://192.168.0.134:4242/connection_token")!
-    private let defaultLocationId: String = "tml_GWCmogANWkpxV7" // live location id
+    private let createPaymentIntentURL = URL(string: "http://192.168.0.134:4242/create_payment_intent")!
+
+    private let defaultLocationId: String = "tml_GV9bCglOApaios" // replace with your valid Location ID
 
     private override init() {
         super.init()
     }
 
-    private func configureIfNeeded() {
+    // MARK: - Existing API (legacy) — kept to avoid breaking callers
+    func processPurchase(
+        amountCents: Int,
+        currency: String,
+        masks: [Int],
+        pulseSeconds: Double
+    ) async -> Result<Void, Error> {
+        isBusy = true
+        errorText = nil
+        defer { isBusy = false }
+
+        do {
+            let paymentIntentId = try await performStripePayment(amountCents: amountCents, currency: currency)
+            print("[TerminalSessionManager] Legacy processPurchase called; masks=\(masks); PaymentIntent=\(paymentIntentId)")
+            return .success(())
+        } catch {
+            self.errorText = error.localizedDescription
+            return .failure(error)
+        }
+    }
+
+    // MARK: - NEW API: vend via /vend_sequence using mask steps
+    func processPurchase(
+        amountCents: Int,
+        currency: String,
+        lines: [CartLine],
+        pulseMs: Int = 900,
+        settleMs: Int = 500
+    ) async -> Result<PiVendSequenceResponse, Error> {
+
+        guard !lines.isEmpty else {
+            return .failure(NSError(domain: "SellMate", code: 0, userInfo: [NSLocalizedDescriptionKey: "Cart is empty."]))
+        }
+
+        isBusy = true
+        errorText = nil
+        defer { isBusy = false }
+
+        do {
+            // 1) Take payment (Stripe Terminal)
+            let paymentIntentId = try await performStripePayment(amountCents: amountCents, currency: currency)
+
+            // 2) Build vend steps from cart lines
+            let pulseSeconds = Double(pulseMs) / 1000.0
+            let gapSeconds = Double(settleMs) / 1000.0
+
+            var steps: [PiVendStep] = []
+
+            for line in lines {
+                guard line.qty > 0 else { continue }
+
+                guard let mask = line.i2cMask else {
+                    throw NSError(
+                        domain: "SellMate",
+                        code: 0,
+                        userInfo: [NSLocalizedDescriptionKey: "Missing i2c mask for slot \(line.slotId). Cannot vend yet."]
+                    )
+                }
+
+                steps.append(
+                    PiVendStep(
+                        mask: mask,
+                        pulses: line.qty,
+                        pulseSeconds: pulseSeconds,
+                        gapSeconds: gapSeconds
+                    )
+                )
+            }
+
+            guard !steps.isEmpty else {
+                throw NSError(domain: "SellMate", code: 0, userInfo: [NSLocalizedDescriptionKey: "No vendable items found."])
+            }
+
+            let req = PiVendSequenceRequest(orderId: paymentIntentId, steps: steps)
+
+            // 3) Call Pi
+            let resp = try await pi.sendVendSequence(request: req)
+
+            guard resp.ok == true else {
+                let msg = "Vend failed (ok=false). mode=\(resp.mode) order_id=\(resp.order_id ?? "nil")"
+                throw NSError(domain: "SellMate", code: 0, userInfo: [NSLocalizedDescriptionKey: msg])
+            }
+
+            return .success(resp)
+        } catch {
+            self.errorText = error.localizedDescription
+            return .failure(error)
+        }
+    }
+
+    // MARK: - Reader connection
+    func ensureConnected(simulated: Bool) {
+        Task { @MainActor in
+            do {
+                try await initializeTerminalIfNeeded()
+
+                if Terminal.shared.connectedReader != nil {
+                    return
+                }
+
+                isBusy = true
+                errorText = nil
+                defer { isBusy = false }
+
+                let discoveryBuilder = BluetoothScanDiscoveryConfigurationBuilder()
+                    .setSimulated(simulated)
+                let discoveryConfig = try discoveryBuilder.build()
+
+                var firstDiscovered: Reader?
+
+                for try await readers in Terminal.shared.discoverReaders(discoveryConfig) {
+                    if let r = readers.first {
+                        firstDiscovered = r
+                        break
+                    }
+                }
+
+                guard let reader = firstDiscovered else {
+                    throw NSError(domain: "Terminal", code: -100, userInfo: [NSLocalizedDescriptionKey: "No readers discovered."])
+                }
+
+                let locationIdToUse: String
+                if let loc = reader.locationId, !loc.isEmpty {
+                    locationIdToUse = loc
+                } else {
+                    guard !defaultLocationId.isEmpty else {
+                        throw NSError(domain: "Terminal", code: -101, userInfo: [NSLocalizedDescriptionKey: "Missing Location ID."])
+                    }
+                    locationIdToUse = defaultLocationId
+                }
+
+                let connBuilder = BluetoothConnectionConfigurationBuilder(
+                    delegate: self,
+                    locationId: locationIdToUse
+                )
+                .setAutoReconnectOnUnexpectedDisconnect(true)
+
+                let connectionConfig = try connBuilder.build()
+
+                let connected = try await Terminal.shared.connectReader(reader, connectionConfig: connectionConfig)
+                print("[TerminalSessionManager] Connected to \(connected.serialNumber)")
+            } catch {
+                self.errorText = error.localizedDescription
+                print("[TerminalSessionManager] ensureConnected error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func initializeTerminalIfNeeded() async throws {
         if !Terminal.isInitialized() {
-            // Reuse the BackendTokenProvider you already defined elsewhere in the project
             let provider = BackendTokenProvider(tokenURL: tokenURL)
             Terminal.initWithTokenProvider(
                 provider,
@@ -36,351 +184,108 @@ final class TerminalSessionManager: NSObject, ObservableObject {
                 offlineDelegate: nil,
                 logLevel: LogLevel.verbose
             )
-            Terminal.shared.delegate = self
-            statusMessage = "Terminal configured."
-            print("[TerminalSession] Terminal configured (initialized).")
         } else {
             Terminal.shared.delegate = self
-            print("[TerminalSession] Terminal already initialized. Delegate set.")
         }
     }
 
-    // Convenience: auto-discover and auto-connect to the first reader found (for kiosk-like flows)
-    func ensureConnected(simulated: Bool = false) {
-        configureIfNeeded()
+    // MARK: - Stripe payment
+    private func performStripePayment(amountCents: Int, currency: String) async throws -> String {
+        try await initializeTerminalIfNeeded()
 
-        // Already connected
-        if let existing = Terminal.shared.connectedReader {
-            connectedReader = existing
-            statusMessage = "Connected to \(existing.serialNumber)."
-            print("[TerminalSession] Already connected to \(existing.serialNumber).")
-            return
+        let clientSecret = try await createPaymentIntentClientSecret(amountCents: amountCents, currency: currency)
+        let retrieved = try await Terminal.shared.retrievePaymentIntent(clientSecret: clientSecret)
+        let collected = try await Terminal.shared.collectPaymentMethod(retrieved)
+        let confirmed = try await Terminal.shared.confirmPaymentIntent(collected)
+
+        guard let piId = confirmed.stripeId, !piId.isEmpty else {
+            throw NSError(
+                domain: "SellMate",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "Stripe Terminal returned a nil or empty PaymentIntent id."]
+            )
         }
 
-        // Avoid overlapping runs
-        guard discoveryTask == nil, connectionTask == nil else {
-            print("[TerminalSession] Discovery/connection already in progress. Skipping ensureConnected.")
-            return
-        }
-
-        isBusy = true
-        statusMessage = simulated ? "Discovering simulated readers..." : "Discovering readers..."
-        errorText = nil
-        print("[TerminalSession] Starting discovery (simulated=\(simulated)) for auto-connect.")
-
-        discoveryTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let config = try BluetoothScanDiscoveryConfigurationBuilder()
-                    .setSimulated(simulated)
-                    .build()
-
-                // Take the first batch that yields any reader and connect to the first one.
-                var chosen: Reader?
-                for try await readers in Terminal.shared.discoverReaders(config) {
-                    print("[TerminalSession] [Auto] Discovery update: \(readers.count) reader(s) found.")
-                    if let first = readers.first {
-                        print("[TerminalSession] [Auto] Choosing first reader: \(first.serialNumber) (type=\(first.deviceType.rawValue), locationId=\(first.locationId ?? "<none>"))")
-                        chosen = first
-                        break
-                    }
-                }
-
-                if let reader = chosen {
-                    await MainActor.run {
-                        self.statusMessage = "Connecting to \(reader.serialNumber)..."
-                    }
-                    try await self.connect(to: reader)
-                } else {
-                    await MainActor.run {
-                        self.statusMessage = "No readers found."
-                        self.isBusy = false
-                    }
-                    print("[TerminalSession] [Auto] No readers found during discovery.")
-                }
-            } catch is CancellationError {
-                await MainActor.run {
-                    self.statusMessage = "Discovery canceled."
-                    self.isBusy = false
-                }
-                print("[TerminalSession] [Auto] Discovery canceled.")
-            } catch {
-                await MainActor.run {
-                    self.errorText = error.localizedDescription
-                    self.statusMessage = "Discovery failed."
-                    self.isBusy = false
-                }
-                print("[TerminalSession] [Auto] Discovery failed: \(error.localizedDescription)")
-            }
-            await MainActor.run { self.discoveryTask = nil }
-        }
+        return piId
     }
 
-    // New: manual discovery that updates discoveredReaders for UI selection
-    func startDiscovery(simulated: Bool) {
-        configureIfNeeded()
+    // MARK: - Backend create_payment_intent
 
-        // Reset previous results
-        discoveredReaders = []
-        errorText = nil
-
-        guard discoveryTask == nil else {
-            print("[TerminalSession] startDiscovery called while discovery is already running.")
-            return
-        }
-
-        isBusy = true
-        statusMessage = simulated ? "Discovering simulated readers..." : "Discovering readers..."
-        print("[TerminalSession] Starting discovery (manual, simulated=\(simulated)).")
-
-        discoveryTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let config = try BluetoothScanDiscoveryConfigurationBuilder()
-                    .setSimulated(simulated)
-                    .build()
-
-                for try await readers in Terminal.shared.discoverReaders(config) {
-                    await MainActor.run {
-                        self.discoveredReaders = readers
-                        self.statusMessage = readers.isEmpty ? "Scanning… (no readers yet)" : "Found \(readers.count) reader(s)"
-                    }
-                    print("[TerminalSession] Discovery update: \(readers.count) reader(s). First: \(readers.first?.serialNumber ?? "<none>")")
-                }
-
-                await MainActor.run {
-                    self.isBusy = false
-                    self.statusMessage = "Discovery finished."
-                }
-                print("[TerminalSession] Discovery finished.")
-            } catch is CancellationError {
-                await MainActor.run {
-                    self.isBusy = false
-                    self.statusMessage = "Discovery canceled."
-                }
-                print("[TerminalSession] Discovery canceled.")
-            } catch {
-                await MainActor.run {
-                    self.isBusy = false
-                    self.errorText = error.localizedDescription
-                    self.statusMessage = "Discovery failed."
-                }
-                print("[TerminalSession] Discovery failed: \(error.localizedDescription)")
-            }
-            await MainActor.run { self.discoveryTask = nil }
-        }
+    private struct CreatePaymentIntentRequest: Codable {
+        let amount: Int
+        let currency: String
     }
 
-    func cancelDiscovery() {
-        discoveryTask?.cancel()
-        discoveryTask = nil
-        print("[TerminalSession] cancelDiscovery() invoked.")
+    private struct CreatePaymentIntentResponse: Codable {
+        let paymentIntent: String
     }
 
-    func connect(to reader: Reader) async throws {
-        print("[TerminalSession] Connect requested to reader \(reader.serialNumber).")
-        connectionTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let locationIdToUse: String
-                if let loc = reader.locationId, !loc.isEmpty {
-                    locationIdToUse = loc
-                } else if !self.defaultLocationId.isEmpty {
-                    locationIdToUse = self.defaultLocationId
-                } else {
-                    throw NSError(domain: "Terminal", code: -1001, userInfo: [NSLocalizedDescriptionKey: "No Location ID available for connection."])
-                }
-                print("[TerminalSession] Using locationId \(locationIdToUse) for connection.")
+    private func createPaymentIntentClientSecret(amountCents: Int, currency: String) async throws -> String {
+        var req = URLRequest(url: createPaymentIntentURL)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-                let config = try BluetoothConnectionConfigurationBuilder(
-                    delegate: self,
-                    locationId: locationIdToUse
-                )
-                .setAutoReconnectOnUnexpectedDisconnect(true)
-                .build()
+        let payload = CreatePaymentIntentRequest(amount: amountCents, currency: currency)
+        req.httpBody = try JSONEncoder().encode(payload)
 
-                print("[TerminalSession] Calling connectReader...")
-                let connected = try await Terminal.shared.connectReader(reader, connectionConfig: config)
-                await MainActor.run {
-                    self.connectedReader = connected
-                    self.statusMessage = "Connected to \(connected.serialNumber)."
-                    self.isBusy = false
-                    self.discoveredReaders = [] // clear list once connected
-                }
-                print("[TerminalSession] Connected to \(connected.serialNumber) (type=\(connected.deviceType.rawValue)).")
-            } catch is CancellationError {
-                await MainActor.run {
-                    self.statusMessage = "Connection canceled."
-                    self.isBusy = false
-                }
-                print("[TerminalSession] Connection canceled.")
-            } catch {
-                await MainActor.run {
-                    self.errorText = error.localizedDescription
-                    self.statusMessage = "Connect failed."
-                    self.isBusy = false
-                }
-                print("[TerminalSession] Connect failed: \(error.localizedDescription)")
-            }
-            await MainActor.run { self.connectionTask = nil }
-        }
-        _ = try? await connectionTask?.value
-    }
-
-    func disconnect() {
-        guard Terminal.shared.connectedReader != nil else {
-            print("[TerminalSession] disconnect() called but no reader is connected.")
-            return
-        }
-        isBusy = true
-        statusMessage = "Disconnecting..."
-        print("[TerminalSession] Disconnecting reader...")
-        Task { @MainActor in
-            do {
-                try await Terminal.shared.disconnectReader()
-                self.connectedReader = nil
-                self.statusMessage = "Disconnected."
-                print("[TerminalSession] Disconnected.")
-            } catch {
-                self.errorText = error.localizedDescription
-                self.statusMessage = "Disconnect failed."
-                print("[TerminalSession] Disconnect failed: \(error.localizedDescription)")
-            }
-            self.isBusy = false
-        }
-    }
-
-    // MARK: - Purchase flow (Finish Purchase) using two-step collect + confirm with detailed logs
-    func processPurchase(amountCents: Int, currency: String = "usd", masks: [Int], pulseSeconds: Double = 2.0) async -> Result<PaymentIntent, Error> {
-        configureIfNeeded()
-
-        guard amountCents > 0 else {
-            let err = NSError(domain: "TerminalSession", code: -2000, userInfo: [NSLocalizedDescriptionKey: "Amount must be greater than 0"])
-            self.errorText = err.localizedDescription
-            return .failure(err)
-        }
-        guard Terminal.shared.connectedReader != nil else {
-            let err = NSError(domain: "TerminalSession", code: -2001, userInfo: [NSLocalizedDescriptionKey: "No reader connected"])
-            self.errorText = err.localizedDescription
-            return .failure(err)
+        if let body = req.httpBody, let s = String(data: body, encoding: .utf8) {
+            print("========== BACKEND create_payment_intent REQUEST ==========")
+            print("URL:", createPaymentIntentURL.absoluteString)
+            print("BODY:", s)
+            print("===========================================================")
         }
 
-        isBusy = true
-        statusMessage = "Creating PaymentIntent..."
-        errorText = nil
+        let (data, resp) = try await URLSession.shared.data(for: req)
+
+        guard let http = resp as? HTTPURLResponse else {
+            throw NSError(domain: "SellMate", code: 0, userInfo: [NSLocalizedDescriptionKey: "No HTTP response from backend."])
+        }
+
+        let bodyStr = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+        print("========== BACKEND create_payment_intent RESPONSE ==========")
+        print("STATUS:", http.statusCode)
+        print("BODY:", bodyStr)
+        print("===========================================================")
+
+        guard (200...299).contains(http.statusCode) else {
+            throw NSError(
+                domain: "SellMate",
+                code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Backend create_payment_intent failed (\(http.statusCode)): \(bodyStr)"]
+            )
+        }
 
         do {
-            // 1) Build PaymentIntent parameters
-            var builder = PaymentIntentParametersBuilder(
-                amount: UInt(amountCents),
-                currency: currency
-            )
-            // If your old flow used automatic capture, uncomment:
-            // builder = builder.setCaptureMethod(.automatic)
-
-            let params = try builder.build()
-
-            print("[TerminalSession] Creating PaymentIntent for \(amountCents) \(currency)")
-            let intent = try await Terminal.shared.createPaymentIntent(params)
-            print("[TerminalSession] Created PI: \(intent.stripeId) status=\(intent.status.rawValue)")
-
-            // 2) Collect payment method on reader
-            statusMessage = "Present card..."
-            print("[TerminalSession] Collecting payment method for PI \(intent.stripeId) ...")
-            let collected = try await Terminal.shared.collectPaymentMethod(intent)
-            print("[TerminalSession] Collected payment method. PI status=\(collected.status.rawValue)")
-
-            // 3) Confirm the PaymentIntent
-            statusMessage = "Processing payment..."
-            print("[TerminalSession] Confirming PI \(collected.stripeId) ...")
-            let processed = try await Terminal.shared.confirmPaymentIntent(collected)
-            print("[TerminalSession] Confirmed PI \(processed.stripeId) status=\(processed.status.rawValue)")
-
-            // 4) Vend after success (if any masks supplied)
-            if !masks.isEmpty {
-                let combinedMask = masks.reduce(0, |)
-                print("[TerminalSession] Payment success; vending with mask \(combinedMask) pulse=\(pulseSeconds)")
-                let vendClient = PiVendClient()
-                do {
-                    try await vendClient.testVend(mask: combinedMask, pulseSeconds: pulseSeconds)
-                    print("[TerminalSession] Vend call completed.")
-                } catch {
-                    // Payment already succeeded; surface vend error but do not fail the payment result
-                    print("[TerminalSession] Vend error after payment success: \(error.localizedDescription)")
-                }
-            } else {
-                print("[TerminalSession] Payment succeeded; no vending masks provided.")
-            }
-
-            statusMessage = "Payment succeeded"
-            isBusy = false
-            return .success(processed)
+            let decoded = try JSONDecoder().decode(CreatePaymentIntentResponse.self, from: data)
+            return decoded.paymentIntent
         } catch {
-            self.errorText = error.localizedDescription
-            self.statusMessage = "Payment failed"
-            self.isBusy = false
-            print("[TerminalSession] Purchase failed: \(error.localizedDescription)")
-            return .failure(error)
+            throw NSError(
+                domain: "SellMate",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to decode backend create_payment_intent response: \(error.localizedDescription). Body: \(bodyStr)"]
+            )
         }
     }
 }
 
+// MARK: - Delegates (minimal)
 extension TerminalSessionManager: TerminalDelegate {
-    func terminal(_ terminal: Terminal, didChangeConnectionStatus status: ConnectionStatus) {
-        // Reflect status changes
-        let text: String
-        switch status {
-        case .notConnected: text = "Reader not connected"
-        case .connecting: text = "Reader connecting…"
-        case .connected: text = "Reader connected"
-        @unknown default: text = "Reader status unknown"
-        }
-        statusMessage = text
-        print("[TerminalSession] TerminalDelegate didChangeConnectionStatus: \(status.rawValue) -> \(text)")
-    }
+    func terminal(_ terminal: Terminal, didChangeConnectionStatus status: ConnectionStatus) {}
+    func terminal(_ terminal: Terminal, didReportUnexpectedReaderDisconnect reader: Reader) {}
+}
 
-    func terminal(_ terminal: Terminal, didReportUnexpectedReaderDisconnect reader: Reader) {
-        Task { @MainActor in
-            self.connectedReader = nil
-            self.statusMessage = "Reader unexpectedly disconnected."
-            print("[TerminalSession] Unexpected reader disconnect: \(reader.serialNumber)")
-        }
-    }
+extension TerminalSessionManager: DiscoveryDelegate {
+    func terminal(_ terminal: Terminal, didUpdateDiscoveredReaders readers: [Reader]) {}
 }
 
 extension TerminalSessionManager: ReaderDelegate, MobileReaderDelegate {
-    func reader(_ reader: Reader, didReportAvailableUpdate update: ReaderSoftwareUpdate) {
-        print("[TerminalSession] Reader available update: \(update)")
-    }
-    func reader(_ reader: Reader, didStartInstallingUpdate update: ReaderSoftwareUpdate, cancelable: Cancelable?) {
-        print("[TerminalSession] Reader started installing update.")
-    }
-    func reader(_ reader: Reader, didReportReaderSoftwareUpdateProgress progress: Float) {
-        print("[TerminalSession] Reader update progress: \(progress)")
-    }
-    func reader(_ reader: Reader, didFinishInstallingUpdate update: ReaderSoftwareUpdate?, error: Error?) {
-        print("[TerminalSession] Reader finished update. error=\(String(describing: error))")
-    }
-    func reader(_ reader: Reader, didRequestReaderInput inputOptions: ReaderInputOptions = []) {
-        print("[TerminalSession] Reader requested input: \(inputOptions)")
-    }
-    func reader(_ reader: Reader, didRequestReaderDisplayMessage displayMessage: ReaderDisplayMessage) {
-        print("[TerminalSession] Reader display message: \(displayMessage)")
-    }
+    func reader(_ reader: Reader, didReportAvailableUpdate update: ReaderSoftwareUpdate) {}
+    func reader(_ reader: Reader, didStartInstallingUpdate update: ReaderSoftwareUpdate, cancelable: Cancelable?) {}
+    func reader(_ reader: Reader, didReportReaderSoftwareUpdateProgress progress: Float) {}
+    func reader(_ reader: Reader, didFinishInstallingUpdate update: ReaderSoftwareUpdate?, error: Error?) {}
+    func reader(_ reader: Reader, didRequestReaderInput inputOptions: ReaderInputOptions = []) {}
+    func reader(_ reader: Reader, didRequestReaderDisplayMessage displayMessage: ReaderDisplayMessage) {}
 
-    // MobileReaderDelegate
-    func reader(_ reader: Reader, didStartReconnect cancelable: Cancelable?) {
-        print("[TerminalSession] Reader auto-reconnect started.")
-        statusMessage = "Reconnecting to reader…"
-    }
-    func reader(_ reader: Reader, didFinishReconnect result: Result<Void, Error>) {
-        switch result {
-        case .success:
-            print("[TerminalSession] Reader auto-reconnect succeeded.")
-            statusMessage = "Reader reconnected."
-        case .failure(let error):
-            print("[TerminalSession] Reader auto-reconnect failed: \(error.localizedDescription)")
-            statusMessage = "Reader reconnect failed."
-        }
-    }
+    func reader(_ reader: Reader, didStartReconnect cancelable: Cancelable?) {}
+    func reader(_ reader: Reader, didFinishReconnect result: Result<Void, Error>) {}
 }

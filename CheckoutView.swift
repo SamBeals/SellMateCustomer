@@ -7,41 +7,18 @@
 //
 
 import SwiftUI
-import StripeTerminal
 
 struct CheckoutView: View {
     @ObservedObject var order: OrderDraft
     @Environment(\.dismiss) private var dismiss
 
-    private var connectedReader: Reader? {
-        guard Terminal.isInitialized() else { return nil }
-        return Terminal.shared.connectedReader
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             List {
-                Section(header: Text("Reader")) {
-                    if let reader = connectedReader {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(deviceTypeName(reader.deviceType))
-                                    .font(.headline)
-                                Text("SN: \(reader.serialNumber)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            if let locationId = reader.locationId, !locationId.isEmpty {
-                                Text(locationId)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    } else {
-                        Text("No reader connected.")
-                            .foregroundColor(.secondary)
-                    }
+                Section(header: Text("Terminal Payment")) {
+                    Text("This flow triggers payment/vending through the cloud backend, matching the Android kiosk app.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
 
                 Section(header: Text("Order")) {
@@ -97,30 +74,19 @@ struct CheckoutView: View {
 
                 Button("Finish Purchase") {
                     Task { @MainActor in
-                        guard Terminal.isInitialized(), Terminal.shared.connectedReader != nil else {
-                            print("[Checkout] No reader connected")
-                            return
-                        }
-
-                        let result = await TerminalSessionManager.shared.processPurchase(
+                        let result = await TerminalSessionManager.shared.processPurchaseViaCloud(
                             amountCents: order.totalCents,
-                            currency: "usd",
-                            lines: order.lines,
-                            pulseMs: 900,
-                            settleMs: 500
+                            lines: order.lines
                         )
 
                         switch result {
-                        case .success(let vendResp):
-                            let statusText = vendResp.ok ? "ok" : "not ok"
-                            let mode = vendResp.mode
-                            let orderId = vendResp.order_id ?? "nil"
-                            print("[Checkout] Vend response: ok=\(statusText), mode=\(mode), order_id=\(orderId)")
+                        case .success(let finalStatus):
+                            print("[Checkout] Cloud checkout complete: order_id=\(finalStatus.order_id), status=\(finalStatus.status)")
                             order.clear()
                             dismiss()
 
                         case .failure(let error):
-                            print("[Checkout] Purchase/vend failed: \(error.localizedDescription)")
+                            print("[Checkout] Cloud checkout failed: \(error.localizedDescription)")
                             // Optionally surface TerminalSessionManager.shared.errorText in UI
                         }
                     }
@@ -131,36 +97,5 @@ struct CheckoutView: View {
             .padding()
         }
         .navigationTitle("Checkout")
-    }
-}
-
-// Local helper for readable device names
-private func deviceTypeName(_ type: DeviceType) -> String {
-    switch type {
-    case .chipper2X: return "Chipper 2X"
-    case .wisePad3: return "WisePad 3"
-    case .stripeM2: return "Stripe Reader M2"
-    case .wisePosE: return "WisePOS E"
-    case .wisePosEDevKit: return "WisePOS E DevKit"
-    case .etna: return "Etna"
-    case .chipper1X: return "Chipper 1X"
-    case .wiseCube: return "WiseCube"
-    case .stripeS700: return "Stripe Reader S700"
-    case .stripeS700DevKit: return "Stripe Reader S700 DevKit"
-    case .stripeS710: return "Stripe Reader S710"
-    case .stripeS710DevKit: return "Stripe Reader S710 DevKit"
-    case .verifoneV660p: return "Verifone V660p"
-    case .verifoneV660pDevKit: return "Verifone V660p DevKit"
-    case .verifoneM425: return "Verifone M425"
-    case .verifoneM450: return "Verifone M450"
-    case .verifoneP630: return "Verifone P630"
-    case .verifoneUX700: return "Verifone UX700"
-    case .verifoneUX700DevKit: return "Verifone UX700 DevKit"
-    case .verifoneVM100: return "Verifone VM100"
-    case .verifoneVP100: return "Verifone VP100"
-    case .tapToPay: return "Tap To Pay"
-    case .stripeT600: return "Stripe Reader T600"
-    case .stripeT600DevKit: return "Stripe Reader T600 DevKit"
-    @unknown default: return "Unknown Reader"
     }
 }

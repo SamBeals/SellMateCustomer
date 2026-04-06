@@ -20,6 +20,8 @@ final class TerminalSessionManager: NSObject, ObservableObject {
     // Backend endpoints (Pi-hosted Node server in your setup)
     private let tokenURL = URL(string: "http://192.168.0.134:4242/connection_token")!
     private let createPaymentIntentURL = URL(string: "http://192.168.0.134:4242/create_payment_intent")!
+    private let cloudBackendBaseURL = URL(string: "https://sellmatebackend-472755926166.us-central1.run.app")!
+    private let defaultMachineId = "machine_001"
 
     private let defaultLocationId: String = "tml_GV9bCglOApaios" // replace with your valid Location ID
 
@@ -111,6 +113,36 @@ final class TerminalSessionManager: NSObject, ObservableObject {
             }
 
             return .success(resp)
+        } catch {
+            self.errorText = error.localizedDescription
+            return .failure(error)
+        }
+    }
+
+    // MARK: - Cloud checkout API (matches SellMateKioskApp Kotlin flow)
+    func processPurchaseViaCloud(
+        amountCents: Int,
+        lines: [CartLine],
+        machineId: String? = nil
+    ) async -> Result<OrderStatusResponse, Error> {
+        guard !lines.isEmpty else {
+            return .failure(NSError(domain: "SellMate", code: 0, userInfo: [NSLocalizedDescriptionKey: "Cart is empty."]))
+        }
+
+        isBusy = true
+        errorText = nil
+        defer { isBusy = false }
+
+        do {
+            let orderId = try await createCloudOrder(
+                amountCents: amountCents,
+                lines: lines,
+                machineId: machineId ?? defaultMachineId
+            )
+
+            _ = try await startCloudPayment(orderId: orderId)
+            let finalStatus = try await pollCloudOrder(orderId: orderId)
+            return .success(finalStatus)
         } catch {
             self.errorText = error.localizedDescription
             return .failure(error)
@@ -263,6 +295,166 @@ final class TerminalSessionManager: NSObject, ObservableObject {
                 domain: "SellMate",
                 code: 0,
                 userInfo: [NSLocalizedDescriptionKey: "Failed to decode backend create_payment_intent response: \(error.localizedDescription). Body: \(bodyStr)"]
+            )
+        }
+    }
+
+    // MARK: - Cloud Backend DTOs
+    struct VendSequenceItem: Codable {
+        let slot_id: String
+        let qty: Int
+    }
+
+    struct CreateOrderRequest: Codable {
+        let machine_id: String
+        let items: [VendSequenceItem]
+        let amount_cents: Int
+    }
+
+    struct CreateOrderResponse: Codable {
+        let order_id: String
+        let status: String
+        let machine_id: String?
+        let amount_cents: Int?
+    }
+
+    struct StartPaymentResponse: Codable {
+        let order_id: String?
+        let status: String
+        let payment_intent_id: String?
+    }
+
+    struct OrderStatusResponse: Codable {
+        let order_id: String
+        let status: String
+        let payment_intent_id: String?
+        let amount_cents: Int?
+    }
+
+    private enum CheckoutState {
+        static let success: Set<String> = ["completed", "vend_succeeded", "paid"]
+        static let waiting: Set<String> = [
+            "created",
+            "payment_requested",
+            "payment_pending",
+            "processing",
+            "authorized",
+            "paid_pending_vend",
+            "vending"
+        ]
+        static let failed: Set<String> = [
+            "payment_failed",
+            "vend_failed",
+            "canceled",
+            "cancelled",
+            "failed",
+            "error"
+        ]
+    }
+
+    private func createCloudOrder(amountCents: Int, lines: [CartLine], machineId: String) async throws -> String {
+        let items = lines
+            .filter { $0.qty > 0 }
+            .map { VendSequenceItem(slot_id: $0.slotId, qty: $0.qty) }
+
+        guard !items.isEmpty else {
+            throw NSError(domain: "SellMate", code: 0, userInfo: [NSLocalizedDescriptionKey: "No vendable items found."])
+        }
+
+        let payload = CreateOrderRequest(machine_id: machineId, items: items, amount_cents: amountCents)
+        let response: CreateOrderResponse = try await sendCloudRequest(
+            path: "orders",
+            method: "POST",
+            body: payload
+        )
+        return response.order_id
+    }
+
+    private func startCloudPayment(orderId: String) async throws -> StartPaymentResponse {
+        try await sendCloudRequest(
+            path: "orders/\(orderId)/start_payment",
+            method: "POST",
+            body: Optional<String>.none
+        ) as StartPaymentResponse
+    }
+
+    private func fetchCloudOrder(orderId: String) async throws -> OrderStatusResponse {
+        try await sendCloudRequest(path: "orders/\(orderId)", method: "GET", body: Optional<String>.none) as OrderStatusResponse
+    }
+
+    private func pollCloudOrder(orderId: String, maxAttempts: Int = 60, intervalNs: UInt64 = 2_000_000_000) async throws -> OrderStatusResponse {
+        for attempt in 1...maxAttempts {
+            let current = try await fetchCloudOrder(orderId: orderId)
+            let normalized = current.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+            if CheckoutState.success.contains(normalized) {
+                return current
+            }
+
+            if CheckoutState.failed.contains(normalized) {
+                throw NSError(
+                    domain: "SellMate",
+                    code: 0,
+                    userInfo: [NSLocalizedDescriptionKey: "Order \(current.order_id) failed with status '\(current.status)'."]
+                )
+            }
+
+            if !CheckoutState.waiting.contains(normalized) {
+                print("[TerminalSessionManager] Unknown cloud status '\(current.status)' (attempt \(attempt)); continuing to poll.")
+            }
+
+            try await Task.sleep(nanoseconds: intervalNs)
+        }
+
+        throw NSError(
+            domain: "SellMate",
+            code: 0,
+            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for cloud checkout to finish for order \(orderId)."]
+        )
+    }
+
+    private func sendCloudRequest<Response: Decodable, RequestBody: Encodable>(
+        path: String,
+        method: String,
+        body: RequestBody?
+    ) async throws -> Response {
+        let url = cloudBackendBaseURL.appendingPathComponent(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        if let body {
+            request.httpBody = try JSONEncoder().encode(body)
+            if let bodyString = String(data: request.httpBody ?? Data(), encoding: .utf8) {
+                print("[CloudCheckout] \(method) \(url.absoluteString) body=\(bodyString)")
+            }
+        } else {
+            print("[CloudCheckout] \(method) \(url.absoluteString)")
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(domain: "SellMate", code: 0, userInfo: [NSLocalizedDescriptionKey: "No HTTP response from cloud backend."])
+        }
+
+        let responseBody = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+        print("[CloudCheckout] status=\(http.statusCode), response=\(responseBody)")
+
+        guard (200...299).contains(http.statusCode) else {
+            throw NSError(
+                domain: "SellMate",
+                code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Cloud backend request failed (\(http.statusCode)): \(responseBody)"]
+            )
+        }
+
+        do {
+            return try JSONDecoder().decode(Response.self, from: data)
+        } catch {
+            throw NSError(
+                domain: "SellMate",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to decode cloud backend response: \(error.localizedDescription). Body: \(responseBody)"]
             )
         }
     }

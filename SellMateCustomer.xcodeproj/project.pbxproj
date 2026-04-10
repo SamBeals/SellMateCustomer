@@ -35,6 +35,8 @@
 		220268CD2F272D9500996694 /* TerminalSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220268CC2F272D9500996694 /* TerminalSessionManager.swift */; };
 		22A2FA7D2F294A9B00AF5DDD /* VendSequenceItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A2FA7C2F294A9B00AF5DDD /* VendSequenceItem.swift */; };
 		22A2FA812F2B24F700AF5DDD /* PiVendStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A2FA802F2B24F700AF5DDD /* PiVendStep.swift */; };
+		33A000011111111111111111 /* MachineLocatorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33A000021111111111111111 /* MachineLocatorService.swift */; };
+		33A000031111111111111111 /* LandingMapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33A000041111111111111111 /* LandingMapViewModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -62,6 +64,8 @@
 		224A17B32F2065C700D1A896 /* PiVendClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiVendClient.swift; sourceTree = "<group>"; };
 		22A2FA7C2F294A9B00AF5DDD /* VendSequenceItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VendSequenceItem.swift; sourceTree = "<group>"; };
 		22A2FA802F2B24F700AF5DDD /* PiVendStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiVendStep.swift; sourceTree = "<group>"; };
+		33A000021111111111111111 /* MachineLocatorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineLocatorService.swift; sourceTree = "<group>"; };
+		33A000041111111111111111 /* LandingMapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingMapViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -129,6 +133,8 @@
 				224A17A92F1DFB0300D1A896 /* FirestorePlanogramService.swift */,
 				224A17AB2F1DFB1E00D1A896 /* PlanogramGridView.swift */,
 				224A17AD2F1DFB6C00D1A896 /* SlotDetailView.swift */,
+				33A000021111111111111111 /* MachineLocatorService.swift */,
+				33A000041111111111111111 /* LandingMapViewModel.swift */,
 				220268632F26EB0300996694 /* SellMateCustomer */,
 				220268CC2F272D9500996694 /* TerminalSessionManager.swift */,
 			);
@@ -306,6 +312,8 @@
 				220268C72F27278600996694 /* CustomerInventoryListView.swift in Sources */,
 				220268802F26EBE400996694 /* FirestorePlanogramService.swift in Sources */,
 				22A2FA812F2B24F700AF5DDD /* PiVendStep.swift in Sources */,
+				33A000011111111111111111 /* MachineLocatorService.swift in Sources */,
+				33A000031111111111111111 /* LandingMapViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

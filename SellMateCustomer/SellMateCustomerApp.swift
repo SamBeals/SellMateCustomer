@@ -37,7 +37,7 @@ struct SellMateCustomerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            CustomerInventoryListView()
+            LandingView()
         }
         .modelContainer(sharedModelContainer)
     }

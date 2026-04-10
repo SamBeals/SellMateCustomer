@@ -6,10 +6,17 @@ private func dollars(_ cents: Int) -> String {
 }
 
 struct CustomerInventoryListView: View {
-    @StateObject private var vm = CustomerInventoryViewModel(machineId: "machine_001")
+    @StateObject private var vm: CustomerInventoryViewModel
     @StateObject private var order = OrderDraft()
     @ObservedObject private var terminal = TerminalSessionManager.shared
     @State private var showCheckout = false
+
+    private let machineName: String
+
+    init(machineId: String = "machine_001", machineName: String = "Available Items") {
+        _vm = StateObject(wrappedValue: CustomerInventoryViewModel(machineId: machineId))
+        self.machineName = machineName
+    }
 
     var body: some View {
         NavigationStack {
@@ -79,7 +86,7 @@ struct CustomerInventoryListView: View {
                     .padding()
                 }
             }
-            .navigationTitle("Available Items")
+            .navigationTitle(machineName)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {

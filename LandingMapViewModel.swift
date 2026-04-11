@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import CoreLocation
 
 @MainActor
@@ -87,3 +88,4 @@ final class LandingMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
         errorText = error.localizedDescription
     }
 }
+

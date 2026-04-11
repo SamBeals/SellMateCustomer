@@ -10,6 +10,12 @@ struct MachineLocation: Identifiable, Equatable {
     var location: CLLocation {
         CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
     }
+    
+    static func == (lhs: MachineLocation, rhs: MachineLocation) -> Bool {
+        // Consider two machine locations equal if their ids match.
+        // This avoids attempting to compare CLLocationCoordinate2D directly.
+        return lhs.id == rhs.id
+    }
 }
 
 enum MachineLocatorError: LocalizedError {
@@ -81,3 +87,4 @@ final class MachineLocatorService {
         }
     }
 }
+

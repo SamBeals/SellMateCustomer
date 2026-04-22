@@ -19,7 +19,7 @@ struct LandingView: View {
                                 selectedMachine = machine
                             } label: {
                                 Circle()
-                                    .fill(selectedMachine?.id == machine.id ? Color.accentColor : Color.red)
+                                    .fill(selectedMachine?.id == machine.id ? Color.green.opacity(0.9) : Color.green)
                                     .frame(width: 16, height: 16)
                                     .overlay(Circle().stroke(Color.white, lineWidth: 2))
                                     .shadow(radius: 2)

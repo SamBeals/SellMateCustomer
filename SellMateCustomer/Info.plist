@@ -27,7 +27,7 @@
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Bluetooth access is required in order to connect to supported bluetooth card readers.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Location access is required in order to accept payments.</string>
+	<string>Location access helps show vending machines near you.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
